@@ -3,6 +3,7 @@
 import argparse
 import logging
 from collections.abc import Sequence
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from agentic_chatbot.cli import run_chat_cli
@@ -12,7 +13,9 @@ from agentic_chatbot.graph import build_chat_graph
 from agentic_chatbot.logging_config import configure_logging
 from agentic_chatbot.model import create_gemini_model
 from agentic_chatbot.persistence import open_sqlite_checkpointer
+from agentic_chatbot.rag import create_document_rag_service
 from agentic_chatbot.tools import build_tools
+from agentic_chatbot.tools.document_search import create_document_search_tool
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,12 +31,12 @@ def _uuid_argument(value: str) -> str:
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Agentic AI chatbot.")
-    actions = parser.add_mutually_exclusive_group()
-    actions.add_argument(
+    parser.add_argument(
         "--thread-id",
         type=_uuid_argument,
         help="Resume an existing conversation UUID; omit to create a new one.",
     )
+    actions = parser.add_mutually_exclusive_group()
     actions.add_argument(
         "--list-conversations",
         action="store_true",
@@ -51,7 +54,26 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         metavar="THREAD_ID",
         help="Delete conversation metadata and its LangGraph checkpoints.",
     )
-    return parser.parse_args(argv)
+    actions.add_argument(
+        "--ingest-pdf",
+        type=Path,
+        metavar="PDF_PATH",
+        help="Ingest a PDF into the conversation selected by --thread-id.",
+    )
+    actions.add_argument(
+        "--list-documents",
+        action="store_true",
+        help="List PDFs available to the conversation selected by --thread-id.",
+    )
+    args = parser.parse_args(argv)
+    if (args.ingest_pdf or args.list_documents) and args.thread_id is None:
+        parser.error("--ingest-pdf and --list-documents require --thread-id")
+    if args.thread_id and (args.list_conversations or args.rename or args.delete):
+        parser.error(
+            "--thread-id can only be combined with --ingest-pdf or "
+            "--list-documents"
+        )
+    return args
 
 
 def _handle_management_command(args: argparse.Namespace, settings: Settings) -> bool:
@@ -99,6 +121,37 @@ def _handle_management_command(args: argparse.Namespace, settings: Settings) -> 
         print(f"Deleted conversation {thread_id} and its checkpoints.")
         return True
 
+    if args.ingest_pdf or args.list_documents:
+        thread_id = args.thread_id
+        with open_conversation_repository(settings.conversation_db_path) as repository:
+            if repository.get(thread_id) is None:
+                LOGGER.error("Conversation '%s' does not exist.", thread_id)
+                raise SystemExit(2)
+
+        try:
+            rag_service = create_document_rag_service(settings)
+            if args.ingest_pdf:
+                document = rag_service.ingest_pdf(args.ingest_pdf, thread_id)
+                print(
+                    f"Ingested {document.source_filename} as {document.document_id} "
+                    f"({document.page_count} pages, {document.chunk_count} chunks)."
+                )
+            else:
+                documents = rag_service.list_documents(thread_id)
+                if not documents:
+                    print("No PDFs are available for this conversation.")
+                else:
+                    for document in documents:
+                        print(
+                            f"{document.document_id} | {document.source_filename} | "
+                            f"{document.page_count} pages | "
+                            f"{document.chunk_count} chunks"
+                        )
+        except ValueError as error:
+            LOGGER.error("%s", error)
+            raise SystemExit(2) from error
+        return True
+
     return False
 
 
@@ -116,7 +169,12 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     try:
         model = create_gemini_model(settings)
-        tools = build_tools(settings)
+        rag_service = create_document_rag_service(settings)
+        document_search_tool = create_document_search_tool(rag_service, thread_id)
+        tools = build_tools(
+            settings,
+            document_search_tool=document_search_tool,
+        )
     except ValueError as error:
         LOGGER.error("%s", error)
         raise SystemExit(2) from error

@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     google_api_key: SecretStr | None = None
     gemini_model: str = "gemini-2.5-flash"
+    gemini_embedding_model: str = "gemini-embedding-001"
     tavily_api_key: SecretStr | None = None
     langsmith_tracing: bool = False
     langsmith_api_key: SecretStr | None = None
@@ -27,6 +28,7 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     checkpoint_db_path: Path = PROJECT_ROOT / "data" / "langgraph_checkpoints.sqlite"
     conversation_db_path: Path = PROJECT_ROOT / "data" / "conversations.sqlite"
+    chroma_db_path: Path = PROJECT_ROOT / "data" / "chroma"
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

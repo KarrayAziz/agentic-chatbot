@@ -28,12 +28,28 @@ def test_main_builds_graph_and_starts_cli(monkeypatch) -> None:
     fake_tools = []
     fake_graph = object()
     fake_checkpointer = object()
+    fake_rag_service = object()
+    fake_document_tool = object()
     fake_repository = FakeConversationRepository()
     received_conversations = []
 
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setattr(main_module, "create_gemini_model", lambda settings: fake_model)
-    monkeypatch.setattr(main_module, "build_tools", lambda settings: fake_tools)
+    monkeypatch.setattr(
+        main_module,
+        "create_document_rag_service",
+        lambda settings: fake_rag_service,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "create_document_search_tool",
+        lambda service, thread_id: fake_document_tool,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "build_tools",
+        lambda settings, document_search_tool: fake_tools,
+    )
     monkeypatch.setattr(
         main_module,
         "open_conversation_repository",
@@ -99,4 +115,45 @@ def test_delete_uses_checkpointer_api_before_removing_metadata(
     assert calls == [("checkpoints", thread_id), ("metadata", thread_id)]
     assert capsys.readouterr().out == (
         f"Deleted conversation {thread_id} and its checkpoints.\n"
+    )
+
+
+def test_ingest_pdf_command_targets_selected_conversation(
+    monkeypatch, capsys
+) -> None:
+    thread_id = "9cc23ba3-2e63-4c21-aefa-5d960664a291"
+    ingested: list[tuple[object, str]] = []
+
+    class ExistingRepository:
+        def get(self, requested_thread_id: str):
+            return SimpleNamespace(thread_id=requested_thread_id)
+
+    class FakeRAGService:
+        def ingest_pdf(self, path, requested_thread_id: str):
+            ingested.append((path, requested_thread_id))
+            return SimpleNamespace(
+                source_filename="guide.pdf",
+                document_id="document-1",
+                page_count=2,
+                chunk_count=4,
+            )
+
+    monkeypatch.setattr(
+        main_module,
+        "open_conversation_repository",
+        lambda path: nullcontext(ExistingRepository()),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "create_document_rag_service",
+        lambda settings: FakeRAGService(),
+    )
+
+    main_module.main(
+        ["--thread-id", thread_id, "--ingest-pdf", "guide.pdf"]
+    )
+
+    assert ingested == [(main_module.Path("guide.pdf"), thread_id)]
+    assert capsys.readouterr().out == (
+        "Ingested guide.pdf as document-1 (2 pages, 4 chunks).\n"
     )

@@ -3,10 +3,10 @@
 An educational project for learning how modern agentic systems are assembled with
 LangGraph, LangChain, Google Gemini, LangSmith, SQLite, and local retrieval.
 
-Phase 5 adds human approval for a simulated paper stock purchase. The sensitive
-tool pauses with LangGraph `interrupt()`, while calculator, weather, and web
-search still execute normally. The persisted UUID thread can be resumed with
-`Command(resume=...)`, even after restarting the application.
+Phase 6 adds conversation-scoped PDF retrieval. PDFs are extracted, split into
+chunks, embedded with Gemini, and stored in local persistent Chroma. Gemini can
+call `search_documents` when a question needs uploaded material; PDF content is
+not automatically added to every prompt.
 
 This project never connects to a brokerage, places real orders, or uses real
 money.
@@ -77,6 +77,19 @@ uv run agentic-chatbot --delete 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
 Deleting removes the metadata record and asks the LangGraph checkpointer to
 delete that thread through its public API.
 
+Ingest and inspect PDFs associated with a conversation:
+
+```bash
+THREAD_ID="paste-the-conversation-uuid"
+uv run agentic-chatbot --thread-id "$THREAD_ID" --ingest-pdf ./documents/guide.pdf
+uv run agentic-chatbot --thread-id "$THREAD_ID" --list-documents
+uv run agentic-chatbot --thread-id "$THREAD_ID"
+```
+
+PDF ingestion uses the Gemini API to generate embeddings. `PyPDFLoader` extracts
+embedded text; image-only scanned PDFs require OCR, which is not part of this
+phase.
+
 You can also run the package as a module:
 
 ```bash
@@ -102,14 +115,17 @@ src/agentic_chatbot/
 ├── logging_config.py
 ├── model.py
 ├── persistence.py
+├── rag.py
 ├── tools/
 │   ├── __init__.py
 │   ├── calculator.py
+│   ├── document_search.py
 │   ├── paper_trading.py
 │   ├── weather.py
 │   └── web_search.py
 └── main.py
 data/
+├── chroma/                       # PDF vectors; created locally; ignored
 ├── conversations.sqlite          # app metadata; created locally; ignored
 └── langgraph_checkpoints.sqlite  # graph state; created locally; ignored
 tests/
@@ -122,6 +138,7 @@ tests/
 ├── test_model.py
 ├── test_paper_trading.py
 ├── test_persistence.py
+├── test_rag.py
 ├── test_weather.py
 └── test_web_search.py
 ```
@@ -146,7 +163,7 @@ The graph is assembled directly with `StateGraph`, `MessagesState`, `START`,
 `END`, conditional edges, `ToolNode`, and `tools_condition`. No prebuilt agent
 abstraction is used.
 
-The agent/model node binds all four tool schemas to Gemini. After Gemini replies,
+The agent/model node binds all five tool schemas to Gemini. After Gemini replies,
 `tools_condition` checks whether its message contains tool calls. Tool calls go to
 `ToolNode`; ordinary answers go to `END`. Tool results loop back to Gemini so it
 can turn raw data into a natural-language answer.
@@ -184,6 +201,34 @@ present a conversation, while the LangGraph checkpoint associated with that ID
 restores what was said. When deleting, the application calls the checkpointer's
 documented `delete_thread()` method first, then deletes its own metadata; it
 never manually manipulates undocumented checkpoint tables.
+
+## PDF ingestion and RAG
+
+```text
+PDF
+ │
+ ▼
+PyPDFLoader extracts one document per page
+ │
+ ▼
+RecursiveCharacterTextSplitter creates overlapping chunks
+ │
+ ▼
+Gemini generates an embedding vector for each chunk
+ │
+ ▼
+Local Chroma stores vectors, text, and metadata
+```
+
+Every chunk contains `thread_id`, `document_id`, `source_filename`,
+`page_number`, and `chunk_index`. Retrieval always applies a `thread_id` filter
+inside the tool. The thread is captured when the tool is constructed and is not
+an argument Gemini can change.
+
+When Gemini calls `search_documents`, the query is embedded and Chroma returns
+the most similar chunks from that conversation only. Results include citation
+information such as `guide.pdf, page 3`. Gemini then uses those passages to
+compose the answer and cite its sources.
 
 The graph structure is unchanged for streaming. The CLI now executes it with:
 
@@ -226,6 +271,9 @@ normal because the external service must finish before Gemini can use its result
   then pauses for explicit approval. Approval returns a paper-only result;
   rejection returns a tool result saying nothing was executed. It has no
   brokerage integration and cannot move money.
+- `search_documents`: searches only the PDFs attached to the active conversation
+  and returns relevant passages with filename, page number, and document ID.
+  Gemini decides when document retrieval is needed.
 
 ## Human approval flow
 
@@ -257,12 +305,16 @@ Configuration is read from environment variables and, when present, a local
 represented as secret values and are never written to startup logs.
 
 `GEMINI_MODEL` selects the model and defaults to `gemini-2.5-flash`.
+`GEMINI_EMBEDDING_MODEL` selects the PDF embedding model and defaults to
+`gemini-embedding-001`.
 `LOG_LEVEL` controls this project's logs; routine HTTP-client request logs are
 suppressed so they do not interrupt streamed assistant output.
 `CHECKPOINT_DB_PATH` selects the local checkpoint file and defaults to
 `data/langgraph_checkpoints.sqlite`.
 `CONVERSATION_DB_PATH` selects the separate application metadata file and
 defaults to `data/conversations.sqlite`.
+`CHROMA_DB_PATH` selects the local vector store directory and defaults to
+`data/chroma`.
 
 ### LangSmith tracing
 
@@ -310,6 +362,8 @@ Ticker: AAPL
 Quantity: 5
 Approve or reject? [approve/reject]: approve
 Assistant: [A streamed explanation that the simulated paper trade executed.]
+You: According to the uploaded guide, how are checkpoints restored?
+Assistant: [Gemini calls search_documents and answers with guide.pdf, page N.]
 You: quit
 Goodbye!
 ```
@@ -326,5 +380,5 @@ uv run agentic-chatbot --delete 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
 ```
 
 Real brokerage integration and real monetary transactions are intentionally not
-part of this project. Retrieval, PDF ingestion, Chroma, and graphical UI layers
-remain future phases.
+part of this project. OCR for scanned PDFs, graphical UI, and FastAPI remain
+future phases.
