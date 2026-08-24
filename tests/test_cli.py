@@ -22,10 +22,12 @@ def test_cli_streams_response_incrementally_without_final_duplicate() -> None:
     user_inputs = iter(["Hello", "quit"])
     output_lines: list[str] = []
     streamed_writes: list[str] = []
+    recorded_messages: list[str] = []
 
     run_chat_cli(
         graph,
         "00000000-0000-0000-0000-000000000001",
+        on_user_message=recorded_messages.append,
         input_fn=lambda prompt: next(user_inputs),
         output_fn=output_lines.append,
         write_fn=streamed_writes.append,
@@ -35,6 +37,7 @@ def test_cli_streams_response_incrementally_without_final_duplicate() -> None:
     assert rendered == "Assistant: LangGraph streams progressively.\n"
     assert len(streamed_writes) > 3
     assert rendered.count("LangGraph streams progressively.") == 1
+    assert recorded_messages == ["Hello"]
     assert output_lines[1] == (
         "Conversation ID: 00000000-0000-0000-0000-000000000001"
     )

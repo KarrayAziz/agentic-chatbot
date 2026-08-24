@@ -10,6 +10,8 @@ def test_settings_have_safe_defaults() -> None:
     assert settings.gemini_model == "gemini-2.5-flash"
     assert settings.tavily_api_key is None
     assert settings.checkpoint_db_path.name == "langgraph_checkpoints.sqlite"
+    assert settings.conversation_db_path.name == "conversations.sqlite"
+    assert settings.conversation_db_path != settings.checkpoint_db_path
     assert settings.langsmith_tracing is False
     assert settings.langsmith_project == "agentic-chatbot"
     assert settings.log_level == "INFO"

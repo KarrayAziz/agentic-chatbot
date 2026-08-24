@@ -3,10 +3,10 @@
 An educational project for learning how modern agentic systems are assembled with
 LangGraph, LangChain, Google Gemini, LangSmith, SQLite, and local retrieval.
 
-Phase 3 persists LangGraph conversation state in a local SQLite checkpoint
-database. Every conversation has a UUID thread ID, so it can be resumed after the
-Python process exits while preserving streaming and the existing tool-calling
-loop.
+Phase 4 adds application-level conversation management. LangGraph state and
+user-facing conversation metadata are intentionally stored in two separate
+SQLite files, connected by the same UUID thread ID. Streaming and the existing
+tool-calling loop continue to work unchanged.
 
 ## Requirements
 
@@ -58,7 +58,21 @@ Save that ID. To continue the same conversation after restarting:
 uv run agentic-chatbot --thread-id 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
 ```
 
-Omitting `--thread-id` always creates a fresh conversation UUID.
+Omitting `--thread-id` always creates a fresh conversation UUID. Its initial
+title is generated from the first user message by collapsing whitespace and
+truncating it to 60 characters; this does not require an extra model call.
+
+Manage saved conversations without starting Gemini:
+
+```bash
+uv run agentic-chatbot --list-conversations
+uv run agentic-chatbot --rename 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e "LangGraph lesson"
+uv run agentic-chatbot --delete 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
+```
+
+`--list-conversations` prints the UUID, title, and last-updated timestamp.
+Deleting removes the metadata record and asks the LangGraph checkpointer to
+delete that thread through its public API.
 
 You can also run the package as a module:
 
@@ -80,6 +94,7 @@ src/agentic_chatbot/
 ├── __main__.py
 ├── cli.py
 ├── config.py
+├── conversations.py
 ├── graph.py
 ├── logging_config.py
 ├── model.py
@@ -91,11 +106,13 @@ src/agentic_chatbot/
 │   └── web_search.py
 └── main.py
 data/
-└── langgraph_checkpoints.sqlite  # created locally; ignored by Git
+├── conversations.sqlite          # app metadata; created locally; ignored
+└── langgraph_checkpoints.sqlite  # graph state; created locally; ignored
 tests/
 ├── test_calculator.py
 ├── test_cli.py
 ├── test_config.py
+├── test_conversations.py
 ├── test_graph.py
 ├── test_main.py
 ├── test_model.py
@@ -140,9 +157,22 @@ Before a run, the checkpointer loads the latest state for that thread. After gra
 steps, it saves new state snapshots. The CLI therefore submits only the newest
 human message; LangGraph restores and combines the earlier messages itself.
 
-The checkpoint database is conceptually separate from application conversation
-metadata. It contains LangGraph execution state only. There is intentionally no
-custom table for conversation names, listing, renaming, or deletion yet.
+## Two SQLite databases
+
+`data/langgraph_checkpoints.sqlite` is owned by LangGraph. It contains graph
+state such as the accumulated messages and checkpoint bookkeeping needed to
+resume execution. Application code does not inspect or edit its internal tables.
+
+`data/conversations.sqlite` is owned by this application. Its `conversations`
+table contains only `thread_id`, `title`, `created_at`, and `updated_at`. Those
+fields support menus and lifecycle actions without treating internal checkpoint
+rows as application data.
+
+The same `thread_id` appears in both systems. The metadata record says how to
+present a conversation, while the LangGraph checkpoint associated with that ID
+restores what was said. When deleting, the application calls the checkpointer's
+documented `delete_thread()` method first, then deletes its own metadata; it
+never manually manipulates undocumented checkpoint tables.
 
 The graph structure is unchanged for streaming. The CLI now executes it with:
 
@@ -193,6 +223,8 @@ represented as secret values and are never written to startup logs.
 suppressed so they do not interrupt streamed assistant output.
 `CHECKPOINT_DB_PATH` selects the local checkpoint file and defaults to
 `data/langgraph_checkpoints.sqlite`.
+`CONVERSATION_DB_PATH` selects the separate application metadata file and
+defaults to `data/conversations.sqlite`.
 
 ### LangSmith tracing
 
@@ -210,7 +242,7 @@ If the API key can access multiple workspaces, also set
 timings, and execution metadata are sent to LangSmith. Keep tracing disabled for
 content you do not want recorded there.
 
-## Try persistence and tools
+## Try conversation management, persistence, and tools
 
 ```text
 Command: uv run agentic-chatbot
@@ -240,5 +272,13 @@ Goodbye!
 Reusing the displayed UUID restores its saved graph state. A new UUID starts with
 no messages from other conversations.
 
-Conversation metadata management, human approval, retrieval, and UI layers remain
-future phases.
+List and manage the record after the first session:
+
+```bash
+uv run agentic-chatbot --list-conversations
+uv run agentic-chatbot --rename 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e "Favorite color"
+uv run agentic-chatbot --delete 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
+```
+
+Human approval, paper trading, retrieval, PDF ingestion, Chroma, and graphical UI
+layers remain future phases.

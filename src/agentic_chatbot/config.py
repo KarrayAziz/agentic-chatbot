@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     langsmith_endpoint: str = "https://api.smith.langchain.com"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     checkpoint_db_path: Path = PROJECT_ROOT / "data" / "langgraph_checkpoints.sqlite"
+    conversation_db_path: Path = PROJECT_ROOT / "data" / "conversations.sqlite"
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

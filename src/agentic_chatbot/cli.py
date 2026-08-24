@@ -76,6 +76,7 @@ def run_chat_cli(
     graph: CompiledStateGraph,
     thread_id: str,
     *,
+    on_user_message: Callable[[str], None] | None = None,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
     write_fn: Callable[[str], None] = _write_to_stdout,
@@ -98,6 +99,8 @@ def run_chat_cli(
         if not user_text:
             continue
 
+        if on_user_message is not None:
+            on_user_message(user_text)
         write_fn("Assistant: ")
         stream_assistant_response(
             graph,
