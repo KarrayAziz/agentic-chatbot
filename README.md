@@ -3,8 +3,8 @@
 An educational project for learning how modern agentic systems are assembled with
 LangGraph, LangChain, Google Gemini, LangSmith, SQLite, and local retrieval.
 
-Phase 0 contains only the Python project foundation. It does not make model calls
-or implement an agent yet.
+Phase 1 is a minimal Gemini chatbot built as an explicit LangGraph graph. The
+terminal keeps conversation messages in memory while the program runs.
 
 ## Requirements
 
@@ -19,14 +19,19 @@ Create the environment and install the locked dependencies:
 uv sync --dev
 ```
 
-Copy the environment template for local configuration:
+Copy the environment template:
 
 ```bash
 cp .env.example .env
 ```
 
-The application can start without API keys during this foundation phase. Do not
-commit `.env`; it is ignored by Git.
+Add your Google AI Studio API key to `.env`:
+
+```dotenv
+GOOGLE_API_KEY=your-google-api-key
+```
+
+Do not commit `.env`; it is ignored by Git.
 
 ## Run
 
@@ -34,10 +39,11 @@ commit `.env`; it is ignored by Git.
 uv run agentic-chatbot
 ```
 
-Expected output:
+The prompt will appear after startup:
 
 ```text
-INFO agentic_chatbot.main: Agentic AI chatbot foundation started successfully.
+Gemini chatbot ready. Type 'exit' or 'quit' to stop.
+You:
 ```
 
 You can also run the package as a module:
@@ -58,18 +64,68 @@ uv run pytest
 src/agentic_chatbot/
 ├── __init__.py
 ├── __main__.py
+├── cli.py
 ├── config.py
+├── graph.py
 ├── logging_config.py
+├── model.py
 └── main.py
 tests/
+├── test_cli.py
 ├── test_config.py
+├── test_graph.py
 └── test_main.py
 ```
+
+## Graph architecture
+
+```text
+START ──→ gemini node ──→ END
+              │
+              ├─ reads all messages from MessagesState
+              ├─ sends them to ChatGoogleGenerativeAI
+              └─ returns the new AI message to be appended to state
+```
+
+The graph is assembled directly with `StateGraph`, `MessagesState`, `START`, and
+`END`. No prebuilt agent abstraction is used.
 
 ## Configuration
 
 Configuration is read from environment variables and, when present, a local
-`.env` file. See `.env.example` for the supported variables. Sensitive values are
+`.env` file. See `.env.example` for all supported values. Sensitive values are
 represented as secret values and are never written to startup logs.
 
-Later phases will add the agent graph and integrations incrementally.
+`GEMINI_MODEL` selects the model and defaults to `gemini-2.5-flash`.
+
+### LangSmith tracing
+
+To inspect graph and model runs in LangSmith, update `.env`:
+
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=your-langsmith-api-key
+LANGSMITH_PROJECT=agentic-chatbot
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+If the API key can access multiple workspaces, also set
+`LANGSMITH_WORKSPACE_ID`. With tracing enabled, conversation inputs, outputs,
+timings, and execution metadata are sent to LangSmith. Keep tracing disabled for
+content you do not want recorded there.
+
+## Try a conversation
+
+```text
+You: My name is Aziz.
+Assistant: Nice to meet you, Aziz!
+You: What is my name?
+Assistant: Your name is Aziz.
+You: quit
+Goodbye!
+```
+
+Conversation history is maintained only by the current CLI process. Exiting the
+program loses that history because persistence is intentionally deferred.
+
+Tools, persistence, human approval, retrieval, and UI layers remain future phases.

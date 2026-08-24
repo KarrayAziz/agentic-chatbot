@@ -1,12 +1,22 @@
-"""Tests for the minimal executable entry point."""
+"""Tests for application wiring without making an external model call."""
 
-import logging
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-from agentic_chatbot.main import main
+import agentic_chatbot.main as main_module
 
 
-def test_main_starts_successfully(caplog) -> None:
-    with caplog.at_level(logging.INFO):
-        main()
+def test_main_builds_graph_and_starts_cli(monkeypatch) -> None:
+    fake_model = FakeListChatModel(responses=["unused"])
+    received_graphs = []
 
-    assert "Agentic AI chatbot foundation started successfully." in caplog.text
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(main_module, "create_gemini_model", lambda settings: fake_model)
+    monkeypatch.setattr(
+        main_module,
+        "run_chat_cli",
+        lambda graph: received_graphs.append(graph),
+    )
+
+    main_module.main()
+
+    assert len(received_graphs) == 1

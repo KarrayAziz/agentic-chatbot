@@ -9,7 +9,10 @@ description = "An educational Agentic AI chatbot built incrementally with LangGr
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "langchain-google-genai>=3,<5",
+    "langgraph>=1,<2",
     "pydantic-settings>=2.10,<3",
+    "python-dotenv>=1.1,<2",
 ]
 
 [project.scripts]

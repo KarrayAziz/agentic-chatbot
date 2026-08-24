@@ -7,6 +7,7 @@ def test_settings_have_safe_defaults() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.google_api_key is None
+    assert settings.gemini_model == "gemini-2.5-flash"
     assert settings.langsmith_tracing is False
     assert settings.langsmith_project == "agentic-chatbot"
     assert settings.log_level == "INFO"
