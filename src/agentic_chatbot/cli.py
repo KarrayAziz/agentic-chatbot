@@ -7,9 +7,10 @@ from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command, Interrupt
+from langgraph.types import Command
 
 from agentic_chatbot.graph import AGENT_NODE
+from agentic_chatbot.hitl import paper_approval_from_interrupts
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +58,7 @@ def stream_assistant_response(
         stream_mode=["messages", "values"],
         version="v2",
     ):
-        approval = approval or _paper_approval_from_interrupts(part.get("interrupts", ()))
+        approval = approval or paper_approval_from_interrupts(part.get("interrupts", ()))
         if part["type"] == "values":
             final_state = part["data"]
             continue
@@ -89,25 +90,13 @@ def stream_assistant_response(
     return StreamResult(final_messages, approval, wrote_streamed_text)
 
 
-def _paper_approval_from_interrupts(
-    interrupts: tuple[Interrupt, ...],
-) -> dict[str, Any] | None:
-    """Return the first recognized paper-trade approval payload."""
-
-    for pending in interrupts:
-        value = pending.value
-        if isinstance(value, dict) and value.get("action") == "paper_buy_stock":
-            return value
-    return None
-
-
 def get_pending_approval(
     graph: CompiledStateGraph, thread_id: str
 ) -> dict[str, Any] | None:
     """Read a restart-safe pending approval from the latest checkpoint."""
 
     snapshot = graph.get_state({"configurable": {"thread_id": thread_id}})
-    return _paper_approval_from_interrupts(snapshot.interrupts)
+    return paper_approval_from_interrupts(snapshot.interrupts)
 
 
 def _ask_for_approval(

@@ -165,6 +165,18 @@ class DocumentRAGService:
             key=lambda document: (document.source_filename, document.document_id),
         )
 
+    def delete_thread_documents(self, thread_id: str) -> int:
+        """Delete all vectors owned by a conversation using Chroma's public API."""
+
+        stored = self.vector_store.get(
+            where={"thread_id": thread_id},
+            include=[],
+        )
+        vector_ids = stored.get("ids") or []
+        if vector_ids:
+            self.vector_store.delete(ids=vector_ids)
+        return len(vector_ids)
+
 
 def resolve_chroma_path(path: Path) -> Path:
     """Resolve configured relative Chroma paths from the project root."""

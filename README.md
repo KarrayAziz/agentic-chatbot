@@ -3,10 +3,9 @@
 An educational project for learning how modern agentic systems are assembled with
 LangGraph, LangChain, Google Gemini, LangSmith, SQLite, and local retrieval.
 
-Phase 6 adds conversation-scoped PDF retrieval. PDFs are extracted, split into
-chunks, embedded with Gemini, and stored in local persistent Chroma. Gemini can
-call `search_documents` when a question needs uploaded material; PDF content is
-not automatically added to every prompt.
+Phase 7 adds a FastAPI transport layer over the existing application services.
+The CLI and HTTP API use the same explicit LangGraph workflow, SQLite stores,
+paper-trade approval flow, and conversation-scoped PDF retrieval.
 
 This project never connects to a brokerage, places real orders, or uses real
 money.
@@ -96,6 +95,38 @@ You can also run the package as a module:
 uv run python -m agentic_chatbot
 ```
 
+### Run the HTTP API
+
+Start the development server:
+
+```bash
+uv run uvicorn agentic_chatbot.api:app --reload
+```
+
+Open `http://127.0.0.1:8000/docs` for interactive Swagger UI documentation or
+`http://127.0.0.1:8000/redoc` for ReDoc. The OpenAPI schema is available at
+`http://127.0.0.1:8000/openapi.json`.
+
+All application endpoints are under `/api`:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | Check that the API is running |
+| `POST` | `/api/conversations` | Create a UUID conversation |
+| `GET` | `/api/conversations` | List conversation metadata |
+| `GET` | `/api/conversations/{thread_id}` | Get conversation metadata |
+| `PATCH` | `/api/conversations/{thread_id}` | Rename a conversation |
+| `DELETE` | `/api/conversations/{thread_id}` | Delete a conversation and its supported persisted data |
+| `POST` | `/api/conversations/{thread_id}/messages` | Run one message through LangGraph |
+| `GET` | `/api/conversations/{thread_id}/state` | Read visible history and pending approval |
+| `POST` | `/api/conversations/{thread_id}/documents` | Upload and ingest one PDF |
+| `GET` | `/api/conversations/{thread_id}/documents` | List PDFs for the conversation |
+| `POST` | `/api/conversations/{thread_id}/approval` | Approve or reject a pending paper trade |
+
+The message endpoint returns either the completed answer or a structured pending
+approval. CLI token streaming remains available; HTTP response streaming is not
+added in this phase.
+
 ## Test
 
 ```bash
@@ -108,10 +139,14 @@ uv run pytest
 src/agentic_chatbot/
 ├── __init__.py
 ├── __main__.py
+├── api.py
+├── api_models.py
+├── application.py
 ├── cli.py
 ├── config.py
 ├── conversations.py
 ├── graph.py
+├── hitl.py
 ├── logging_config.py
 ├── model.py
 ├── persistence.py
@@ -129,6 +164,9 @@ data/
 ├── conversations.sqlite          # app metadata; created locally; ignored
 └── langgraph_checkpoints.sqlite  # graph state; created locally; ignored
 tests/
+├── conftest.py
+├── test_api.py
+├── test_application.py
 ├── test_calculator.py
 ├── test_cli.py
 ├── test_config.py
@@ -144,6 +182,18 @@ tests/
 ```
 
 ## Graph architecture
+
+FastAPI is only the HTTP boundary: it validates JSON, multipart uploads, UUIDs,
+and maps expected application errors to HTTP status codes. Route handlers call
+`AgentApplication`, which coordinates the existing conversation repository,
+LangGraph graph, checkpointer, and RAG service. Agent decisions and tool routing
+remain inside LangGraph.
+
+For a message request, the URL's `thread_id` is passed to LangGraph as
+`configurable.thread_id`. The SQLite checkpointer restores that thread's state,
+Gemini may call tools, and the completed answer or pending interrupt is returned
+as JSON. Reusing the same UUID on a later HTTP request restores the same graph
+state—even after the API process restarts.
 
 ```text
                      no tool call
@@ -379,6 +429,44 @@ uv run agentic-chatbot --rename 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e "Favorite c
 uv run agentic-chatbot --delete 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
 ```
 
-Real brokerage integration and real monetary transactions are intentionally not
-part of this project. OCR for scanned PDFs, graphical UI, and FastAPI remain
-future phases.
+## Try the HTTP API
+
+Create a conversation and copy its `thread_id`:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/conversations \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"API lesson"}'
+```
+
+Use that UUID in subsequent requests:
+
+```bash
+THREAD_ID="paste-the-conversation-uuid"
+
+curl -s -X POST "http://127.0.0.1:8000/api/conversations/$THREAD_ID/messages" \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"What is 1928 * 73?"}'
+
+curl -s "http://127.0.0.1:8000/api/conversations/$THREAD_ID/state"
+
+curl -s -X POST "http://127.0.0.1:8000/api/conversations/$THREAD_ID/documents" \
+  -F 'file=@./documents/guide.pdf'
+
+curl -s "http://127.0.0.1:8000/api/conversations/$THREAD_ID/documents"
+```
+
+After asking Gemini to paper-buy a stock, resolve its pending interrupt:
+
+```bash
+curl -s -X POST "http://127.0.0.1:8000/api/conversations/$THREAD_ID/approval" \
+  -H 'Content-Type: application/json' \
+  -d '{"decision":"approve"}'
+```
+
+Use `{"decision":"reject"}` to reject it. No simulated trade executes before
+approval, and no endpoint can place a real trade.
+
+Real brokerage integration, real monetary transactions, authentication,
+deployment configuration, OCR for scanned PDFs, a graphical UI, and HTTP token
+streaming are intentionally not part of this phase.
