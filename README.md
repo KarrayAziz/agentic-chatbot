@@ -3,10 +3,13 @@
 An educational project for learning how modern agentic systems are assembled with
 LangGraph, LangChain, Google Gemini, LangSmith, SQLite, and local retrieval.
 
-Phase 4 adds application-level conversation management. LangGraph state and
-user-facing conversation metadata are intentionally stored in two separate
-SQLite files, connected by the same UUID thread ID. Streaming and the existing
-tool-calling loop continue to work unchanged.
+Phase 5 adds human approval for a simulated paper stock purchase. The sensitive
+tool pauses with LangGraph `interrupt()`, while calculator, weather, and web
+search still execute normally. The persisted UUID thread can be resumed with
+`Command(resume=...)`, even after restarting the application.
+
+This project never connects to a brokerage, places real orders, or uses real
+money.
 
 ## Requirements
 
@@ -102,6 +105,7 @@ src/agentic_chatbot/
 ├── tools/
 │   ├── __init__.py
 │   ├── calculator.py
+│   ├── paper_trading.py
 │   ├── weather.py
 │   └── web_search.py
 └── main.py
@@ -116,6 +120,7 @@ tests/
 ├── test_graph.py
 ├── test_main.py
 ├── test_model.py
+├── test_paper_trading.py
 ├── test_persistence.py
 ├── test_weather.py
 └── test_web_search.py
@@ -141,10 +146,15 @@ The graph is assembled directly with `StateGraph`, `MessagesState`, `START`,
 `END`, conditional edges, `ToolNode`, and `tools_condition`. No prebuilt agent
 abstraction is used.
 
-The agent/model node binds all three tool schemas to Gemini. After Gemini replies,
+The agent/model node binds all four tool schemas to Gemini. After Gemini replies,
 `tools_condition` checks whether its message contains tool calls. Tool calls go to
 `ToolNode`; ordinary answers go to `END`. Tool results loop back to Gemini so it
 can turn raw data into a natural-language answer.
+
+The graph shape remains explicit and unchanged in Phase 5. The
+`paper_buy_stock` tool calls `interrupt()` before its simulated execution. That
+pauses `ToolNode` and stores a structured approval request containing the ticker
+and quantity. Harmless tools contain no interrupt and continue immediately.
 
 At compilation, the graph receives a SQLite `SqliteSaver` checkpointer. Every
 streamed graph execution also receives this configuration:
@@ -160,8 +170,9 @@ human message; LangGraph restores and combines the earlier messages itself.
 ## Two SQLite databases
 
 `data/langgraph_checkpoints.sqlite` is owned by LangGraph. It contains graph
-state such as the accumulated messages and checkpoint bookkeeping needed to
-resume execution. Application code does not inspect or edit its internal tables.
+state such as accumulated messages, pending interrupts, and checkpoint
+bookkeeping needed to resume execution. Application code does not inspect or
+edit its internal tables.
 
 `data/conversations.sqlite` is owned by this application. Its `conversations`
 table contains only `thread_id`, `title`, `created_at`, and `updated_at`. Those
@@ -211,6 +222,33 @@ normal because the external service must finish before Gemini can use its result
   wind speed from its forecast API. No weather API key is required.
 - `tavily_search`: returns up to five current web-search results. It requires
   `TAVILY_API_KEY`.
+- `paper_buy_stock`: proposes a simulated purchase with a ticker and quantity,
+  then pauses for explicit approval. Approval returns a paper-only result;
+  rejection returns a tool result saying nothing was executed. It has no
+  brokerage integration and cannot move money.
+
+## Human approval flow
+
+```text
+Gemini requests paper_buy_stock
+              │
+              ▼
+       interrupt(payload)
+              │
+       checkpoint is saved
+              │
+       approve or reject
+              │
+              ▼
+     Command(resume=decision)
+              │
+              ▼
+ Tool result → Gemini → streamed answer
+```
+
+At an approval prompt, entering `exit` or `quit` closes the program without
+resolving the request. Restart with the same `--thread-id` and the persisted
+approval prompt is displayed again.
 
 ## Configuration
 
@@ -265,6 +303,13 @@ You: Search the web for the latest LangGraph release.
 Assistant: [A progressively displayed answer after Tavily search.]
 You: Hello, how are you?
 Assistant: [A progressively displayed response without needing a tool.]
+You: Paper buy 5 shares of AAPL.
+Approval required — PAPER TRADING ONLY
+Action: paper_buy_stock
+Ticker: AAPL
+Quantity: 5
+Approve or reject? [approve/reject]: approve
+Assistant: [A streamed explanation that the simulated paper trade executed.]
 You: quit
 Goodbye!
 ```
@@ -280,5 +325,6 @@ uv run agentic-chatbot --rename 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e "Favorite c
 uv run agentic-chatbot --delete 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
 ```
 
-Human approval, paper trading, retrieval, PDF ingestion, Chroma, and graphical UI
-layers remain future phases.
+Real brokerage integration and real monetary transactions are intentionally not
+part of this project. Retrieval, PDF ingestion, Chroma, and graphical UI layers
+remain future phases.
