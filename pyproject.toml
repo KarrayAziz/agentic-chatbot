@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentic-chatbot"
+version = "0.1.0"
+description = "An educational Agentic AI chatbot built incrementally with LangGraph."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic-settings>=2.10,<3",
+]
+
+[project.scripts]
+agentic-chatbot = "agentic_chatbot.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4,<10",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentic_chatbot"]
