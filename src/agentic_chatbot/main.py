@@ -7,6 +7,7 @@ from agentic_chatbot.config import load_settings
 from agentic_chatbot.graph import build_chat_graph
 from agentic_chatbot.logging_config import configure_logging
 from agentic_chatbot.model import create_gemini_model
+from agentic_chatbot.tools import build_tools
 
 LOGGER = logging.getLogger(__name__)
 
@@ -19,11 +20,12 @@ def main() -> None:
 
     try:
         model = create_gemini_model(settings)
+        tools = build_tools(settings)
     except ValueError as error:
         LOGGER.error("%s", error)
         raise SystemExit(2) from error
 
-    graph = build_chat_graph(model)
+    graph = build_chat_graph(model, tools)
     run_chat_cli(graph)
 
 

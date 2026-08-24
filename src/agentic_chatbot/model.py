@@ -12,7 +12,10 @@ def create_gemini_model(settings: Settings) -> ChatGoogleGenerativeAI:
     API key, while creating a real external-service client should.
     """
 
-    if settings.google_api_key is None:
+    if (
+        settings.google_api_key is None
+        or not settings.google_api_key.get_secret_value().strip()
+    ):
         raise ValueError(
             "GOOGLE_API_KEY is required. Copy .env.example to .env and add your "
             "Gemini API key."

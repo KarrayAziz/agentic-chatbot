@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     google_api_key: SecretStr | None = None
     gemini_model: str = "gemini-2.5-flash"
+    tavily_api_key: SecretStr | None = None
     langsmith_tracing: bool = False
     langsmith_api_key: SecretStr | None = None
     langsmith_project: str = "agentic-chatbot"

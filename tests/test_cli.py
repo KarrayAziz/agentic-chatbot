@@ -1,18 +1,23 @@
 """Tests for the in-memory CLI conversation loop."""
 
-from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.messages import AIMessage
 
 from agentic_chatbot.cli import run_chat_cli
-from agentic_chatbot.graph import build_chat_graph
+
+
+class StubGraph:
+    """Return a fixed assistant response without invoking a model."""
+
+    def invoke(self, state):
+        return {"messages": [*state["messages"], AIMessage("A test response.")]}
 
 
 def test_cli_prints_response_and_quits() -> None:
-    graph = build_chat_graph(FakeListChatModel(responses=["A test response."]))
     user_inputs = iter(["Hello", "quit"])
     output: list[str] = []
 
     run_chat_cli(
-        graph,
+        StubGraph(),
         input_fn=lambda prompt: next(user_inputs),
         output_fn=output.append,
     )

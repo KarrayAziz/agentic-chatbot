@@ -3,7 +3,8 @@
 An educational project for learning how modern agentic systems are assembled with
 LangGraph, LangChain, Google Gemini, LangSmith, SQLite, and local retrieval.
 
-Phase 1 is a minimal Gemini chatbot built as an explicit LangGraph graph. The
+Phase 2 adds an explicit tool-calling loop to the Gemini chatbot. Gemini can
+choose a safe calculator, current weather lookup, or Tavily web search. The
 terminal keeps conversation messages in memory while the program runs.
 
 ## Requirements
@@ -25,10 +26,11 @@ Copy the environment template:
 cp .env.example .env
 ```
 
-Add your Google AI Studio API key to `.env`:
+Add your Google AI Studio and Tavily API keys to `.env`:
 
 ```dotenv
 GOOGLE_API_KEY=your-google-api-key
+TAVILY_API_KEY=your-tavily-api-key
 ```
 
 Do not commit `.env`; it is ignored by Git.
@@ -69,26 +71,58 @@ src/agentic_chatbot/
 ├── graph.py
 ├── logging_config.py
 ├── model.py
+├── tools/
+│   ├── __init__.py
+│   ├── calculator.py
+│   ├── weather.py
+│   └── web_search.py
 └── main.py
 tests/
+├── test_calculator.py
 ├── test_cli.py
 ├── test_config.py
 ├── test_graph.py
-└── test_main.py
+├── test_main.py
+├── test_model.py
+├── test_weather.py
+└── test_web_search.py
 ```
 
 ## Graph architecture
 
 ```text
-START ──→ gemini node ──→ END
-              │
-              ├─ reads all messages from MessagesState
-              ├─ sends them to ChatGoogleGenerativeAI
-              └─ returns the new AI message to be appended to state
+                     no tool call
+                  ┌──────────────→ END
+                  │
+START ──→ agent/model node
+                  │
+                  │ tool call requested
+                  ▼
+              tools node
+                  │
+                  └──────────────→ agent/model node
+                                      (interprets tool result)
 ```
 
-The graph is assembled directly with `StateGraph`, `MessagesState`, `START`, and
-`END`. No prebuilt agent abstraction is used.
+The graph is assembled directly with `StateGraph`, `MessagesState`, `START`,
+`END`, conditional edges, `ToolNode`, and `tools_condition`. No prebuilt agent
+abstraction is used.
+
+The agent/model node binds all three tool schemas to Gemini. After Gemini replies,
+`tools_condition` checks whether its message contains tool calls. Tool calls go to
+`ToolNode`; ordinary answers go to `END`. Tool results loop back to Gemini so it
+can turn raw data into a natural-language answer.
+
+## Available tools
+
+- `calculator`: parses an allowlist of arithmetic syntax with Python's AST. It
+  never uses `eval()` and rejects names, function calls, code, excessive powers,
+  non-finite values, and overly large results.
+- `get_current_weather`: resolves a location with Open-Meteo's geocoding API and
+  returns current temperature, apparent temperature, humidity, condition, and
+  wind speed from its forecast API. No weather API key is required.
+- `tavily_search`: returns up to five current web-search results. It requires
+  `TAVILY_API_KEY`.
 
 ## Configuration
 
@@ -114,13 +148,17 @@ If the API key can access multiple workspaces, also set
 timings, and execution metadata are sent to LangSmith. Keep tracing disabled for
 content you do not want recorded there.
 
-## Try a conversation
+## Try the tools
 
 ```text
-You: My name is Aziz.
-Assistant: Nice to meet you, Aziz!
-You: What is my name?
-Assistant: Your name is Aziz.
+You: What is 837 * 92?
+Assistant: 837 × 92 is 77,004.
+You: What is the weather in Tunis?
+Assistant: [A concise answer based on current Open-Meteo data.]
+You: Search the web for the latest LangGraph release.
+Assistant: [An answer based on current Tavily search results.]
+You: Hello, how are you?
+Assistant: [A normal conversational response without needing a tool.]
 You: quit
 Goodbye!
 ```
@@ -128,4 +166,4 @@ Goodbye!
 Conversation history is maintained only by the current CLI process. Exiting the
 program loses that history because persistence is intentionally deferred.
 
-Tools, persistence, human approval, retrieval, and UI layers remain future phases.
+Persistent threads, human approval, retrieval, and UI layers remain future phases.
