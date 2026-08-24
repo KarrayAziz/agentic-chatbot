@@ -3,9 +3,10 @@
 An educational project for learning how modern agentic systems are assembled with
 LangGraph, LangChain, Google Gemini, LangSmith, SQLite, and local retrieval.
 
-Phase 2 adds an explicit tool-calling loop to the Gemini chatbot. Gemini can
-choose a safe calculator, current weather lookup, or Tavily web search. The
-terminal keeps conversation messages in memory while the program runs.
+Phase 2.5 streams Gemini's text progressively through LangGraph while preserving
+the existing explicit tool-calling loop. Gemini can choose a safe calculator,
+current weather lookup, or Tavily web search. The terminal keeps conversation
+messages in memory while the program runs.
 
 ## Requirements
 
@@ -113,6 +114,33 @@ The agent/model node binds all three tool schemas to Gemini. After Gemini replie
 `ToolNode`; ordinary answers go to `END`. Tool results loop back to Gemini so it
 can turn raw data into a natural-language answer.
 
+The graph structure is unchanged for streaming. The CLI now executes it with:
+
+```python
+graph.stream(
+    {"messages": messages},
+    stream_mode=["messages", "values"],
+    version="v2",
+)
+```
+
+- `messages` events contain `(message_chunk, metadata)` pairs. Text chunks from
+  the `agent` node are written immediately to the terminal.
+- `values` events contain full state snapshots. The last snapshot becomes the
+  conversation history for the next user turn.
+
+Metadata filtering ensures only output from the agent/model node is displayed.
+Structured tool-call blocks and tool results remain internal. The completed AI
+message already exists in the final state, but is not printed again.
+
+## Streaming behavior
+
+For a normal response, text begins appearing as Gemini generates it. For a tool
+request, Gemini first emits a structured tool call, so there may initially be no
+visible text. The graph runs the tool, loops back to Gemini, and then streams the
+final natural-language answer. A short pause during weather or web search is
+normal because the external service must finish before Gemini can use its result.
+
 ## Available tools
 
 - `calculator`: parses an allowlist of arithmetic syntax with Python's AST. It
@@ -152,13 +180,13 @@ content you do not want recorded there.
 
 ```text
 You: What is 837 * 92?
-Assistant: 837 × 92 is 77,004.
+Assistant: 837 × 92 is 77,004.  [appears progressively]
 You: What is the weather in Tunis?
-Assistant: [A concise answer based on current Open-Meteo data.]
+Assistant: [A progressively displayed answer after the weather lookup.]
 You: Search the web for the latest LangGraph release.
-Assistant: [An answer based on current Tavily search results.]
+Assistant: [A progressively displayed answer after Tavily search.]
 You: Hello, how are you?
-Assistant: [A normal conversational response without needing a tool.]
+Assistant: [A progressively displayed response without needing a tool.]
 You: quit
 Goodbye!
 ```

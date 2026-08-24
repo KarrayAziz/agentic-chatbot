@@ -50,9 +50,14 @@ def test_graph_routes_tool_call_through_tool_node_and_back_to_model() -> None:
     model = ToolCallingFakeModel(responses=[tool_request, final_answer])
     graph = build_chat_graph(model, [calculator])
 
-    result = graph.invoke(
-        {"messages": [HumanMessage(content="What is 837 * 92?")]}
+    parts = list(
+        graph.stream(
+            {"messages": [HumanMessage(content="What is 837 * 92?")]},
+            stream_mode=["messages", "values"],
+            version="v2",
+        )
     )
+    result = [part["data"] for part in parts if part["type"] == "values"][-1]
 
     assert len(result["messages"]) == 4
     assert result["messages"][1].tool_calls[0]["name"] == "calculator"
@@ -60,6 +65,15 @@ def test_graph_routes_tool_call_through_tool_node_and_back_to_model() -> None:
     assert "77004" in result["messages"][2].content
     assert isinstance(result["messages"][-1], AIMessage)
     assert result["messages"][-1].content == "837 × 92 is 77,004."
+    streamed_text = "".join(
+        str(message.text)
+        for part in parts
+        if part["type"] == "messages"
+        for message, metadata in [part["data"]]
+        if metadata.get("langgraph_node") == AGENT_NODE
+    )
+    assert streamed_text == "837 × 92 is 77,004."
+    assert "expression" not in streamed_text
 
 
 def test_graph_ends_without_tools_for_normal_conversation() -> None:
