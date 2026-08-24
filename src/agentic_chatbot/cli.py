@@ -26,6 +26,7 @@ def _write_to_stdout(text: str) -> None:
 def stream_assistant_response(
     graph: CompiledStateGraph,
     messages: list[BaseMessage],
+    thread_id: str,
     write_fn: Callable[[str], None],
 ) -> list[BaseMessage]:
     """Stream agent text and return the graph's final message state.
@@ -40,6 +41,7 @@ def stream_assistant_response(
 
     for part in graph.stream(
         {"messages": messages},
+        config={"configurable": {"thread_id": thread_id}},
         stream_mode=["messages", "values"],
         version="v2",
     ):
@@ -72,15 +74,16 @@ def stream_assistant_response(
 
 def run_chat_cli(
     graph: CompiledStateGraph,
+    thread_id: str,
     *,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
     write_fn: Callable[[str], None] = _write_to_stdout,
 ) -> None:
-    """Run a streaming conversation retained in memory for this process only."""
+    """Run a streaming conversation persisted under one LangGraph thread."""
 
-    messages: list[BaseMessage] = []
     output_fn("Gemini chatbot ready. Type 'exit' or 'quit' to stop.")
+    output_fn(f"Conversation ID: {thread_id}")
 
     while True:
         try:
@@ -95,7 +98,11 @@ def run_chat_cli(
         if not user_text:
             continue
 
-        messages.append(HumanMessage(content=user_text))
         write_fn("Assistant: ")
-        messages = stream_assistant_response(graph, messages, write_fn)
+        stream_assistant_response(
+            graph,
+            [HumanMessage(content=user_text)],
+            thread_id,
+            write_fn,
+        )
         write_fn("\n")

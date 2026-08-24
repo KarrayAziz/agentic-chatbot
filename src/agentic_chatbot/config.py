@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     langsmith_project: str = "agentic-chatbot"
     langsmith_endpoint: str = "https://api.smith.langchain.com"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    checkpoint_db_path: Path = PROJECT_ROOT / "data" / "langgraph_checkpoints.sqlite"
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

@@ -3,10 +3,10 @@
 An educational project for learning how modern agentic systems are assembled with
 LangGraph, LangChain, Google Gemini, LangSmith, SQLite, and local retrieval.
 
-Phase 2.5 streams Gemini's text progressively through LangGraph while preserving
-the existing explicit tool-calling loop. Gemini can choose a safe calculator,
-current weather lookup, or Tavily web search. The terminal keeps conversation
-messages in memory while the program runs.
+Phase 3 persists LangGraph conversation state in a local SQLite checkpoint
+database. Every conversation has a UUID thread ID, so it can be resumed after the
+Python process exits while preserving streaming and the existing tool-calling
+loop.
 
 ## Requirements
 
@@ -38,16 +38,27 @@ Do not commit `.env`; it is ignored by Git.
 
 ## Run
 
+Start a new conversation:
+
 ```bash
 uv run agentic-chatbot
 ```
 
-The prompt will appear after startup:
+The application creates and displays a UUID:
 
 ```text
 Gemini chatbot ready. Type 'exit' or 'quit' to stop.
+Conversation ID: 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
 You:
 ```
+
+Save that ID. To continue the same conversation after restarting:
+
+```bash
+uv run agentic-chatbot --thread-id 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
+```
+
+Omitting `--thread-id` always creates a fresh conversation UUID.
 
 You can also run the package as a module:
 
@@ -72,12 +83,15 @@ src/agentic_chatbot/
 ├── graph.py
 ├── logging_config.py
 ├── model.py
+├── persistence.py
 ├── tools/
 │   ├── __init__.py
 │   ├── calculator.py
 │   ├── weather.py
 │   └── web_search.py
 └── main.py
+data/
+└── langgraph_checkpoints.sqlite  # created locally; ignored by Git
 tests/
 ├── test_calculator.py
 ├── test_cli.py
@@ -85,6 +99,7 @@ tests/
 ├── test_graph.py
 ├── test_main.py
 ├── test_model.py
+├── test_persistence.py
 ├── test_weather.py
 └── test_web_search.py
 ```
@@ -113,6 +128,21 @@ The agent/model node binds all three tool schemas to Gemini. After Gemini replie
 `tools_condition` checks whether its message contains tool calls. Tool calls go to
 `ToolNode`; ordinary answers go to `END`. Tool results loop back to Gemini so it
 can turn raw data into a natural-language answer.
+
+At compilation, the graph receives a SQLite `SqliteSaver` checkpointer. Every
+streamed graph execution also receives this configuration:
+
+```python
+{"configurable": {"thread_id": conversation_uuid}}
+```
+
+Before a run, the checkpointer loads the latest state for that thread. After graph
+steps, it saves new state snapshots. The CLI therefore submits only the newest
+human message; LangGraph restores and combines the earlier messages itself.
+
+The checkpoint database is conceptually separate from application conversation
+metadata. It contains LangGraph execution state only. There is intentionally no
+custom table for conversation names, listing, renaming, or deletion yet.
 
 The graph structure is unchanged for streaming. The CLI now executes it with:
 
@@ -161,6 +191,8 @@ represented as secret values and are never written to startup logs.
 `GEMINI_MODEL` selects the model and defaults to `gemini-2.5-flash`.
 `LOG_LEVEL` controls this project's logs; routine HTTP-client request logs are
 suppressed so they do not interrupt streamed assistant output.
+`CHECKPOINT_DB_PATH` selects the local checkpoint file and defaults to
+`data/langgraph_checkpoints.sqlite`.
 
 ### LangSmith tracing
 
@@ -178,9 +210,21 @@ If the API key can access multiple workspaces, also set
 timings, and execution metadata are sent to LangSmith. Keep tracing disabled for
 content you do not want recorded there.
 
-## Try the tools
+## Try persistence and tools
 
 ```text
+Command: uv run agentic-chatbot
+Conversation ID: 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
+You: My favorite color is blue.
+Assistant: I will remember that.
+You: quit
+Goodbye!
+
+Command: uv run agentic-chatbot --thread-id 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
+Conversation ID: 7d91f4eb-276f-4a24-bb27-c5ee0b1b8f9e
+You: What is my favorite color?
+Assistant: Your favorite color is blue.
+
 You: What is 837 * 92?
 Assistant: 837 × 92 is 77,004.  [appears progressively]
 You: What is the weather in Tunis?
@@ -193,7 +237,8 @@ You: quit
 Goodbye!
 ```
 
-Conversation history is maintained only by the current CLI process. Exiting the
-program loses that history because persistence is intentionally deferred.
+Reusing the displayed UUID restores its saved graph state. A new UUID starts with
+no messages from other conversations.
 
-Persistent threads, human approval, retrieval, and UI layers remain future phases.
+Conversation metadata management, human approval, retrieval, and UI layers remain
+future phases.

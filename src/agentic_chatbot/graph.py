@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langchain_core.tools import BaseTool
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -14,7 +15,10 @@ TOOLS_NODE = "tools"
 
 
 def build_chat_graph(
-    model: BaseChatModel, tools: Sequence[BaseTool]
+    model: BaseChatModel,
+    tools: Sequence[BaseTool],
+    *,
+    checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
     """Build and compile the explicit model → tools → model loop.
 
@@ -44,4 +48,4 @@ def build_chat_graph(
     )
     graph_builder.add_edge(TOOLS_NODE, AGENT_NODE)
 
-    return graph_builder.compile()
+    return graph_builder.compile(checkpointer=checkpointer)

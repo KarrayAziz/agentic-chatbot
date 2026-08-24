@@ -18,6 +18,12 @@ build/
 dist/
 *.egg-info/
 
+# Local persistent data
+data/*.sqlite
+data/*.sqlite-journal
+data/*.sqlite-shm
+data/*.sqlite-wal
+
 # Editors and operating systems
 .idea/
 .vscode/
