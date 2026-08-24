@@ -159,6 +159,8 @@ Configuration is read from environment variables and, when present, a local
 represented as secret values and are never written to startup logs.
 
 `GEMINI_MODEL` selects the model and defaults to `gemini-2.5-flash`.
+`LOG_LEVEL` controls this project's logs; routine HTTP-client request logs are
+suppressed so they do not interrupt streamed assistant output.
 
 ### LangSmith tracing
 
