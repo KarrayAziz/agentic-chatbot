@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     checkpoint_db_path: Path = PROJECT_ROOT / "data" / "langgraph_checkpoints.sqlite"
     conversation_db_path: Path = PROJECT_ROOT / "data" / "conversations.sqlite"
     chroma_db_path: Path = PROJECT_ROOT / "data" / "chroma"
+    backend_api_url: str = "http://127.0.0.1:8000"
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

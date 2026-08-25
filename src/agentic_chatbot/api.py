@@ -1,15 +1,19 @@
 """FastAPI transport layer for the existing agent application services."""
 
+import asyncio
+import json
+import logging
 from asyncio import get_running_loop
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Annotated
-from typing import TypeVar
+from queue import Empty, Queue
+from threading import Event, Thread
+from typing import Annotated, TypeVar
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, File, Request, Response, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from agentic_chatbot.api_models import (
     AgentReplyResponse,
@@ -25,14 +29,19 @@ from agentic_chatbot.api_models import (
 from agentic_chatbot.application import (
     MAX_PDF_UPLOAD_BYTES,
     AgentApplication,
+    ApplicationError,
     ApprovalConflictError,
     ApplicationValidationError,
     ConversationNotFoundError,
 )
 from agentic_chatbot.config import Settings, load_settings
 from agentic_chatbot.logging_config import configure_logging
+from agentic_chatbot.streaming import AgentStreamEvent
 
 T = TypeVar("T")
+LOGGER = logging.getLogger(__name__)
+STREAM_MEDIA_TYPE = "application/x-ndjson"
+_STREAM_END = object()
 
 
 async def _run_blocking(function: Callable[..., T], *args: object) -> T:
@@ -47,7 +56,70 @@ async def _run_blocking(function: Callable[..., T], *args: object) -> T:
     try:
         return await event_loop.run_in_executor(executor, partial(function, *args))
     finally:
-        executor.shutdown(wait=False)
+        # The submitted operation has completed before this finally block. Join
+        # its worker so rapid Streamlit/API requests do not accumulate threads.
+        executor.shutdown(wait=True)
+
+
+async def _stream_message_as_ndjson(
+    service: AgentApplication,
+    thread_id: str,
+    content: str,
+) -> AsyncIterator[bytes]:
+    """Bridge the synchronous LangGraph iterator to an async HTTP body."""
+
+    queue: Queue[AgentStreamEvent | object] = Queue()
+    client_disconnected = Event()
+
+    def enqueue(item: AgentStreamEvent | object) -> None:
+        queue.put(item)
+
+    def produce_events() -> None:
+        try:
+            for event in service.stream_message(thread_id, content):
+                if client_disconnected.is_set():
+                    break
+                enqueue(event)
+        except ApplicationError as error:
+            enqueue(AgentStreamEvent("error", message=str(error)))
+        except Exception:
+            LOGGER.exception("Agent stream failed for thread %s", thread_id)
+            enqueue(
+                AgentStreamEvent(
+                    "error",
+                    message="The agent stream failed unexpectedly.",
+                )
+            )
+        finally:
+            enqueue(_STREAM_END)
+
+    producer = Thread(
+        target=produce_events,
+        name="agent-stream",
+        daemon=True,
+    )
+    producer.start()
+
+    try:
+        while True:
+            try:
+                event = queue.get_nowait()
+            except Empty:
+                # Keep the response cancellable while Gemini or a tool is busy.
+                await asyncio.sleep(0.01)
+                continue
+            if event is _STREAM_END:
+                break
+            assert isinstance(event, AgentStreamEvent)
+            encoded = json.dumps(
+                event.as_dict(),
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            yield f"{encoded}\n".encode()
+    finally:
+        client_disconnected.set()
+        producer.join(timeout=1)
 
 
 async def get_agent_application(request: Request) -> AgentApplication:
@@ -143,6 +215,35 @@ async def send_message(
         service.send_message, str(thread_id), request.content
     )
     return AgentReplyResponse.model_validate(reply)
+
+
+@router.post(
+    "/conversations/{thread_id}/messages/stream",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {STREAM_MEDIA_TYPE: {}},
+            "description": "Newline-delimited agent stream events.",
+        }
+    },
+)
+async def stream_message(
+    thread_id: UUID,
+    request: SendMessageRequest,
+    service: AgentApplicationDependency,
+) -> StreamingResponse:
+    """Stream one graph execution as sanitized newline-delimited JSON."""
+
+    # Return an ordinary 404 before response headers if the UUID is unknown.
+    await _run_blocking(service.get_conversation, str(thread_id))
+    return StreamingResponse(
+        _stream_message_as_ndjson(service, str(thread_id), request.content),
+        media_type=STREAM_MEDIA_TYPE,
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get(

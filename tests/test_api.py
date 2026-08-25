@@ -1,6 +1,7 @@
 """FastAPI endpoint tests using an application-service test double."""
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from agentic_chatbot.application import (
 from agentic_chatbot.config import Settings
 from agentic_chatbot.conversations import Conversation
 from agentic_chatbot.rag import IngestedDocument
+from agentic_chatbot.streaming import AgentStreamEvent
 
 THREAD_ID = "4fda8f49-6234-44e8-ac68-93fd80497292"
 DOCUMENT_ID = "41d259b0-0aab-49cb-90b8-8666d45dba1c"
@@ -51,6 +53,7 @@ class FakeAgentApplication:
         self.pending_approval: dict | None = None
         self.documents: list[IngestedDocument] = []
         self.approval_decisions: list[str] = []
+        self.stream_thread_ids: list[str] = []
 
     def create_conversation(self, title: str | None = None) -> Conversation:
         conversation = Conversation(
@@ -95,6 +98,30 @@ class FakeAgentApplication:
         answer = f"Gemini answered: {content}"
         self.messages.append(VisibleMessage("assistant", answer))
         return AgentReply("completed", answer, None)
+
+    def stream_message(self, thread_id: str, content: str):
+        self.get_conversation(thread_id)
+        self.stream_thread_ids.append(thread_id)
+        self.messages.append(VisibleMessage("user", content))
+
+        if "buy" in content.lower():
+            self.pending_approval = APPROVAL
+            yield AgentStreamEvent("tool_started", tool="paper_buy_stock")
+            yield AgentStreamEvent("pending_approval", approval=APPROVAL)
+            return
+
+        if "calculate" in content.lower():
+            yield AgentStreamEvent("tool_started", tool="calculator")
+            yield AgentStreamEvent("tool_finished", tool="calculator")
+            chunks = ["The answer ", "is 42."]
+        else:
+            chunks = ["Gemini ", "streams ", "progressively."]
+
+        answer = "".join(chunks)
+        for chunk in chunks:
+            yield AgentStreamEvent("assistant_chunk", content=chunk)
+        self.messages.append(VisibleMessage("assistant", answer))
+        yield AgentStreamEvent("complete")
 
     def get_conversation_state(self, thread_id: str) -> ConversationState:
         self.get_conversation(thread_id)
@@ -251,3 +278,74 @@ async def test_request_validation_rejects_invalid_uuid_and_decision() -> None:
             json={"decision": "maybe"},
         )
         assert response.status_code == 422
+
+
+@run_async_test
+async def test_stream_endpoint_yields_incremental_text_and_one_completion() -> None:
+    client, service = _client()
+    async with client:
+        await client.post("/api/conversations")
+        async with client.stream(
+            "POST",
+            f"/api/conversations/{THREAD_ID}/messages/stream",
+            json={"content": "Hello"},
+        ) as response:
+            events = [json.loads(line) async for line in response.aiter_lines()]
+
+    chunks = [
+        event["content"]
+        for event in events
+        if event["type"] == "assistant_chunk"
+    ]
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    assert chunks == ["Gemini ", "streams ", "progressively."]
+    assert "".join(chunks) == "Gemini streams progressively."
+    assert [event["type"] for event in events].count("complete") == 1
+    assert service.stream_thread_ids == [THREAD_ID]
+
+
+@run_async_test
+async def test_stream_endpoint_reports_tool_lifecycle_before_final_answer() -> None:
+    client, _ = _client()
+    async with client:
+        await client.post("/api/conversations")
+        response = await client.post(
+            f"/api/conversations/{THREAD_ID}/messages/stream",
+            json={"content": "Calculate six times seven"},
+        )
+
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert [event["type"] for event in events] == [
+        "tool_started",
+        "tool_finished",
+        "assistant_chunk",
+        "assistant_chunk",
+        "complete",
+    ]
+    assert events[0] == {"type": "tool_started", "tool": "calculator"}
+    assert "".join(
+        event["content"]
+        for event in events
+        if event["type"] == "assistant_chunk"
+    ) == "The answer is 42."
+
+
+@run_async_test
+async def test_stream_endpoint_ends_with_pending_approval_not_completion() -> None:
+    client, service = _client()
+    async with client:
+        await client.post("/api/conversations")
+        response = await client.post(
+            f"/api/conversations/{THREAD_ID}/messages/stream",
+            json={"content": "Paper buy 5 AAPL shares"},
+        )
+
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert [event["type"] for event in events] == [
+        "tool_started",
+        "pending_approval",
+    ]
+    assert events[-1]["approval"]["ticker"] == "AAPL"
+    assert service.pending_approval == APPROVAL
+    assert not any(event["type"] == "complete" for event in events)

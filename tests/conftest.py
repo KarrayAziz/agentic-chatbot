@@ -17,6 +17,7 @@ def isolate_application_environment(monkeypatch: MonkeyPatch) -> Iterator[None]:
         "LANGSMITH_API_KEY",
         "LANGSMITH_PROJECT",
         "LOG_LEVEL",
+        "BACKEND_API_URL",
     ):
         monkeypatch.delenv(variable, raising=False)
     monkeypatch.setenv("LANGSMITH_TRACING", "false")

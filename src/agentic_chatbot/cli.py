@@ -9,8 +9,8 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
-from agentic_chatbot.graph import AGENT_NODE
 from agentic_chatbot.hitl import paper_approval_from_interrupts
+from agentic_chatbot.streaming import stream_agent_events
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,12 +20,6 @@ class StreamResult:
     messages: list[BaseMessage]
     approval: dict[str, Any] | None
     wrote_assistant_text: bool
-
-
-def _message_text(message: BaseMessage) -> str:
-    """Return text blocks while ignoring tool calls and other structured blocks."""
-
-    return str(message.text)
 
 
 def _write_to_stdout(text: str) -> None:
@@ -48,44 +42,20 @@ def stream_assistant_response(
     used for the next CLI turn. Interrupts are carried on v2 stream parts.
     """
 
-    final_state: dict[str, Any] | None = None
     approval: dict[str, Any] | None = None
     wrote_streamed_text = False
 
-    for part in graph.stream(
-        {"messages": graph_input} if isinstance(graph_input, list) else graph_input,
-        config={"configurable": {"thread_id": thread_id}},
-        stream_mode=["messages", "values"],
-        version="v2",
-    ):
-        approval = approval or paper_approval_from_interrupts(part.get("interrupts", ()))
-        if part["type"] == "values":
-            final_state = part["data"]
-            continue
-        if part["type"] != "messages":
-            continue
-
-        message_chunk, metadata = part["data"]
-        if metadata.get("langgraph_node") != AGENT_NODE:
-            continue
-
-        text = _message_text(message_chunk)
-        if text:
+    for event in stream_agent_events(graph, graph_input, thread_id):
+        if event.type == "assistant_chunk" and event.content:
             if not wrote_streamed_text:
                 write_fn("Assistant: ")
-            write_fn(text)
+            write_fn(event.content)
             wrote_streamed_text = True
+        elif event.type == "pending_approval":
+            approval = event.approval
 
-    if final_state is None:
-        raise RuntimeError("Graph streaming completed without a final state.")
-
-    final_messages = final_state["messages"]
-    if not wrote_streamed_text and final_messages:
-        fallback_text = _message_text(final_messages[-1])
-        if fallback_text:
-            write_fn("Assistant: ")
-            write_fn(fallback_text)
-            wrote_streamed_text = True
+    snapshot = graph.get_state({"configurable": {"thread_id": thread_id}})
+    final_messages = snapshot.values.get("messages", [])
 
     return StreamResult(final_messages, approval, wrote_streamed_text)
 

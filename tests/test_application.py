@@ -65,3 +65,44 @@ def test_message_uses_persistent_thread_and_visible_history(
         "Explain the API path"
     )
     assert settings.checkpoint_db_path.exists()
+
+
+def test_stream_message_uses_application_metadata_and_checkpoint(
+    tmp_path: Path, monkeypatch
+) -> None:
+    model = ApplicationFakeModel(responses=[AIMessage("Streamed through the app.")])
+    monkeypatch.setattr(
+        application_module,
+        "create_gemini_model",
+        lambda settings: model,
+    )
+    monkeypatch.setattr(
+        application_module,
+        "create_document_rag_service",
+        lambda settings: FakeRAGService(),
+    )
+    monkeypatch.setattr(
+        application_module,
+        "build_tools",
+        lambda settings, document_search_tool: [],
+    )
+    settings = Settings(
+        _env_file=None,
+        conversation_db_path=tmp_path / "conversations.sqlite",
+        checkpoint_db_path=tmp_path / "checkpoints.sqlite",
+        chroma_db_path=tmp_path / "chroma",
+    )
+    service = AgentApplication(settings)
+    conversation = service.create_conversation()
+
+    events = list(
+        service.stream_message(conversation.thread_id, "Use the HTTP stream")
+    )
+    state = service.get_conversation_state(conversation.thread_id)
+
+    assert [event.type for event in events] == ["assistant_chunk", "complete"]
+    assert events[0].content == "Streamed through the app."
+    assert [message.content for message in state.messages] == [
+        "Use the HTTP stream",
+        "Streamed through the app.",
+    ]

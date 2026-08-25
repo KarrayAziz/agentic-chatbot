@@ -14,6 +14,7 @@ def test_settings_have_safe_defaults() -> None:
     assert settings.conversation_db_path.name == "conversations.sqlite"
     assert settings.conversation_db_path != settings.checkpoint_db_path
     assert settings.chroma_db_path.name == "chroma"
+    assert settings.backend_api_url == "http://127.0.0.1:8000"
     assert settings.langsmith_tracing is False
     assert settings.langsmith_project == "agentic-chatbot"
     assert settings.log_level == "INFO"

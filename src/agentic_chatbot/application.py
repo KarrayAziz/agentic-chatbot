@@ -28,6 +28,7 @@ from agentic_chatbot.rag import (
     IngestedDocument,
     create_document_rag_service,
 )
+from agentic_chatbot.streaming import AgentStreamEvent, stream_agent_events
 from agentic_chatbot.tools import build_tools
 from agentic_chatbot.tools.document_search import create_document_search_tool
 
@@ -153,6 +154,33 @@ class AgentApplication:
                 graph,
                 thread_id,
                 {"messages": [HumanMessage(content=normalized_content)]},
+            )
+
+    def stream_message(
+        self, thread_id: str, content: str
+    ) -> Iterator[AgentStreamEvent]:
+        """Run one message and yield safe events as LangGraph produces them."""
+
+        self.get_conversation(thread_id)
+        normalized_content = content.strip()
+        if not normalized_content:
+            raise ApplicationValidationError("Message content cannot be empty.")
+
+        with self._open_graph(thread_id) as graph:
+            snapshot = graph.get_state(self._graph_config(thread_id))
+            if paper_approval_from_interrupts(snapshot.interrupts) is not None:
+                raise ApprovalConflictError(
+                    "Resolve the pending approval before sending another message."
+                )
+            with open_conversation_repository(
+                self.settings.conversation_db_path
+            ) as repository:
+                repository.record_user_message(thread_id, normalized_content)
+
+            yield from stream_agent_events(
+                graph,
+                [HumanMessage(content=normalized_content)],
+                thread_id,
             )
 
     def respond_to_approval(
